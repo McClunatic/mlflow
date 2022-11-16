@@ -64,6 +64,7 @@ try:
     from mlflow import spark
     from mlflow import statsmodels
     from mlflow import tensorflow
+    from mlflow import transformers
     from mlflow import xgboost
     from mlflow import shap
     from mlflow import pyspark
@@ -87,6 +88,7 @@ try:
         "spark",
         "statsmodels",
         "tensorflow",
+        "transformers",
         "keras",
         "xgboost",
         "shap",
