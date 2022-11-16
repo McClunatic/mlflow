@@ -826,14 +826,57 @@ def _load_pyfunc(path, **kwargs):
     :param path: Local filesystem path to the MLflow Model with the
                  ``transformers`` flavor.
     """
-    if 'task' not in kwargs:
-        raise KeyError(
-            'Must include kwarg `task` when calling `mlflow.'
+    if 'task' in kwargs:
+        return _TransformersPipelineWrapper(_load_model(path, **kwargs))
+    else:
+        _logger.warning(
+            'Transformers `load_pyfunc` called without `task` kwarg, cannot '
+            'return pipeline wrapper. Falling back to model wrapper'
         )
-    return _PipelineWrapper(_load_model(path, **kwargs))
+        return _TransformersModelWrapper(_load_model(path, **kwargs))
 
 
-class _PipelineWrapper:
+class _TransformersModelWrapper:
+    """
+    Wrapper class that creates a predict function such that
+    predict(data: pd.DataFrame) -> model's output as ``pandas.DataFrame``
+    """
+
+    def __init__(self, transformers_model):
+        self.transformers_model = transformers_model
+
+    def predict(self, data, device="cpu"):
+        import torch
+
+        if isinstance(data, pd.DataFrame):
+            inp_data = data.values.astype(np.float32)
+        elif isinstance(data, np.ndarray):
+            inp_data = data
+        elif isinstance(data, (list, dict)):
+            raise TypeError(
+                "The Transformers model flavor does not support List or Dict "
+                "input types. Please use a pandas.DataFrame or a numpy.ndarray"
+            )
+
+        self.transformers_model.to(device)
+        self.transformers_model.eval()
+        with torch.no_grad():
+            input_tensor = torch.from_numpy(inp_data).to(device)
+            preds = self.transformers_model(input_tensor)
+            if not isinstance(preds, torch.Tensor):
+                raise TypeError(
+                    "Expected Transformers model to output a single output "
+                    f"tensor, but got output of type '{type(preds)}'"
+                )
+            if isinstance(data, pd.DataFrame):
+                predicted = pd.DataFrame(preds.numpy())
+                predicted.index = data.index
+            else:
+                predicted = preds.numpy()
+            return predicted
+
+
+class _TransformersPipelineWrapper:
     """
     Wrapper class that creates a predict function such that
     predict(data: pd.DataFrame) -> model's output as ``pandas.DataFrame``
