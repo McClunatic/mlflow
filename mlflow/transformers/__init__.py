@@ -54,6 +54,8 @@ FLAVOR_NAME = "transformers"
 
 _SAVED_TRANSFORMERS_MODEL_DIR_NAME = "model.pth"
 _SAVED_TRANSFORMERS_TOKENIZER_DIR_NAME = "tokenizer.pth"
+_TRANSFORMERS_MODEL_CLASS_FILE_NAME = "model_class.txt"
+_TRANSFORMERS_TOKENIZER_CLASS_FILE_NAME = "tokenizer_class.txt"
 _TRANSFORMERS_PIPELINE_TASK_FILE_NAME = "pipeline_task.txt"
 _EXTRA_FILES_KEY = "extra_files"
 _REQUIREMENTS_FILE_KEY = "requirements_file"
@@ -459,7 +461,7 @@ def save_model(
        # Load model and tokenizer for inference
        model_path = "model"
        model_uri = "{}/{}".format(os.getcwd(), model_path)
-       qa_pipeline = mlflow.pytorch.load_model(model_uri)
+       qa_pipeline = mlflow.transformers.load_model(model_uri)
        print(f"Loaded {model_path}:")
        question = "Who am I?"
        context = "My name is Brian and I live in New York."
@@ -478,6 +480,7 @@ def save_model(
                  'answer': 'Brian'}
     """
 
+    import torch
     import transformers
 
     _validate_env_arguments(
@@ -511,16 +514,6 @@ def save_model(
     model_data_path = os.path.join(path, model_data_subpath)
     os.makedirs(model_data_path)
 
-    # Persist task if specified
-    # TODO: Stop persisting this information to the filesystem once we have a
-    # mechanism for supplying the MLmodel configuration to
-    # `mlflow.pytorch._load_pyfunc`
-    if task is not None:
-        task_path = os.path.join(
-            model_data_path, _TRANSFORMERS_PIPELINE_TASK_FILE_NAME)
-        with open(task_path, "w") as f:
-            f.write(f'{task}\n')
-
     # Save transformers model
     model_path = os.path.join(
         model_data_path, _SAVED_TRANSFORMERS_MODEL_DIR_NAME)
@@ -529,7 +522,30 @@ def save_model(
     # Save transformers tokenizer
     tokenizer_path = os.path.join(
         model_data_path, _SAVED_TRANSFORMERS_TOKENIZER_DIR_NAME)
-    transformers_model.save_pretrained(tokenizer_path)
+    transformers_tokenizer.save_pretrained(tokenizer_path)
+
+    # TODO: Stop persisting this information to the filesystem once we have a
+    # mechanism for supplying the MLmodel configuration to
+    # `mlflow.transformers._load_pyfunc`
+
+    # Persist model class name
+    model_class_path = os.path.join(
+        model_data_path, _TRANSFORMERS_MODEL_CLASS_FILE_NAME)
+    with open(model_class_path, "w") as f:
+        f.write(f'{transformers_model.__class__.__name__}\n')
+
+    # Persist model class name
+    tokenizer_class_path = os.path.join(
+        model_data_path, _TRANSFORMERS_TOKENIZER_CLASS_FILE_NAME)
+    with open(tokenizer_class_path, "w") as f:
+        f.write(f'{transformers_tokenizer.__class__.__name__}\n')
+
+    # Persist task if specified
+    if task is not None:
+        task_path = os.path.join(
+            model_data_path, _TRANSFORMERS_PIPELINE_TASK_FILE_NAME)
+        with open(task_path, "w") as f:
+            f.write(f'{task}\n')
 
     transformers_artifacts_config = {}
 
@@ -578,6 +594,7 @@ def save_model(
         FLAVOR_NAME,
         model_data=model_data_subpath,
         transformers_version=str(transformers.__version__),
+        torch_version=str(torch.__version__),
         code=code_dir_subpath,
         **transformers_artifacts_config,
     )
@@ -648,6 +665,10 @@ def _load_model(path, **kwargs):
     model_path = os.path.join(path, _SAVED_TRANSFORMERS_MODEL_DIR_NAME)
     tokenizer_path = os.path.join(
         path, _SAVED_TRANSFORMERS_TOKENIZER_DIR_NAME)
+    model_class_path = os.path.join(
+        path, _TRANSFORMERS_MODEL_CLASS_FILE_NAME)
+    tokenizer_class_path = os.path.join(
+        path, _TRANSFORMERS_TOKENIZER_CLASS_FILE_NAME)
     task_path = os.path.join(
         path, _TRANSFORMERS_PIPELINE_TASK_FILE_NAME)
 
@@ -661,12 +682,27 @@ def _load_model(path, **kwargs):
             f'Specified path {path!r} does not contain model directory '
             f'{_SAVED_TRANSFORMERS_TOKENIZER_DIR_NAME!r}'
         )
+    if not os.path.exists(model_class_path):
+        raise FileNotFoundError(
+            f'Specified path {path!r} does not contain model class file '
+            f'{_TRANSFORMERS_MODEL_CLASS_FILE_NAME!r}'
+        )
+    if not os.path.exists(tokenizer_class_path):
+        raise FileNotFoundError(
+            f'Specified path {path!r} does not contain tokenizer class file '
+            f'{_TRANSFORMERS_TOKENIZER_CLASS_FILE_NAME!r}'
+        )
 
-    model = transformers.PreTrainedModel.from_pretrained(
-            model_path, kwargs=kwargs)
+    model_class_name = open(model_class_path).read().strip()
+    tokenizer_class_name = open(tokenizer_class_path).read().strip()
+
+    # Import model and tokenizer classes to call .from_pretrained
+    PreTrainedModel = getattr(transformers, model_class_name)
+    PreTrainedTokenizer = getattr(transformers, tokenizer_class_name)
+
     # TODO: Consider support for tokenizer kwargs
-    tokenizer = transformers.PreTrainedTokenizerBase.from_pretrained(
-        tokenizer_path)
+    model = PreTrainedModel.from_pretrained(model_path, **kwargs)
+    tokenizer = PreTrainedTokenizer.from_pretrained(tokenizer_path)
 
     path = None
     if os.path.exists(task_path):
@@ -726,7 +762,7 @@ def load_model(model_uri, dst_path=None, **kwargs):
 
        # Inference after loading the logged model
        model_uri = "runs:/{}/model".format(run.info.run_id)
-       qa_pipeline = mlflow.pytorch.load_model(model_uri)
+       qa_pipeline = mlflow.transformers.load_model(model_uri)
        print(f"Loaded {model_path}:")
        question = "Who am I?"
        context = "My name is Brian and I live in New York."
@@ -745,6 +781,7 @@ def load_model(model_uri, dst_path=None, **kwargs):
                  'answer': 'Brian'}
     """
 
+    import torch
     import transformers
 
     local_model_path = _download_artifact_from_uri(
@@ -759,6 +796,13 @@ def load_model(model_uri, dst_path=None, **kwargs):
             "version '%s'",
             transformers_conf["transformers_version"],
             transformers.__version__,
+        )
+    if torch.__version__ != transformers_conf["torch_version"]:
+        _logger.warning(
+            "Stored model version '%s' does not match installed torch "
+            "version '%s'",
+            transformers_conf["torch_version"],
+            torch.__version__,
         )
     transformers_artifacts_path = os.path.join(
         local_model_path, transformers_conf["model_data"])
