@@ -827,7 +827,7 @@ def _load_pyfunc(path, **kwargs):
                  ``transformers`` flavor.
     """
 
-    return _TransformersWrapper(_load_model(path, **kwargs))
+    return _TransformersWrapper(*_load_model(path, **kwargs))
 
 
 class _TransformersWrapper:
