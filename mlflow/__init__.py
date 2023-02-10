@@ -59,6 +59,7 @@ try:
     from mlflow import recipes
     from mlflow import pyfunc
     from mlflow import pytorch
+    from mlflow import sentence_transformers
     from mlflow import sklearn
     from mlflow import spacy
     from mlflow import spark
@@ -83,6 +84,7 @@ try:
         "onnx",
         "pyfunc",
         "pytorch",
+        "sentence_transformers",
         "sklearn",
         "spacy",
         "spark",
